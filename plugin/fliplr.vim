@@ -6,7 +6,7 @@
 "   'lhs {operator} rhs' => 'rhs {operator} lhs'
 "
 " Usage:
-"   1. In viaual mode, select left hand side, operator and right hand side.
+"   1. In visual mode, select left hand side, operator and right hand side.
 "   2. execute ':FlipLR {operator}'
 
 command! -range -nargs=1 FlipLR call <SID>FlipLR_execute(<SID>FlipLR__getSelectedText(), <f-args>)
@@ -77,3 +77,5 @@ function! s:FlipLR__getSelectedText()
 
     return result
 endfunction
+
+" vim: set et ft=vim sts=4 sw=4 ts=4 tw=0 : 
