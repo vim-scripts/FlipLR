@@ -1,6 +1,6 @@
 " FlipLR -- Flips left hand side and right hand side.
 "
-" Maintainer: Shuhei Kubota <kubota.shuhei@gmail.com>
+" Maintainer: Shuhei Kubota <kubota.shuhei+vim@gmail.com>
 " Description:
 "   This script flips left hand side and right hand side.
 "   'lhs {operator} rhs' => 'rhs {operator} lhs'
@@ -12,9 +12,18 @@
 "
 "   This mapping may help you.
 "       noremap \f :FlipLR <C-R>=g:FlipLR_detectPivot()<CR>
+"   This mapping highlights an operator. (add to your gvimrc)
+"       noremap \f :call g:FlipLR_startHighlightingPivot()<CR><ESC>:FlipLR <C-R>=g:FlipLR_detectPivot()<CR>
+"
+" Variables:
+"   g:FlipLR_resultHighlightDelay = 1000
+"       an interval until clearing highlights. (in milliseconds)
 
 command! -range -nargs=1 FlipLR call <SID>FlipLR_execute(<SID>FlipLR__getSelectedText(), <f-args>)
 
+if !exists('g:FlipLR_resultHighlightDelay')
+    let g:FlipLR_resultHighlightDelay = 1000
+endif
 
 let s:REGEXP_SPACE = '[ \t\e\r\b\n]'
 
@@ -23,7 +32,7 @@ function! s:FlipLR_execute(entire, ...) " only a:000[0] is used
     "[sp_l1][rhs][sp_l2][pivot][sp_r1][lhs][sp_r2]
     "lhs   : left hand side
     "rhs   : right hand side
-    "sp_l1 : spaces befoer the lhs
+    "sp_l1 : spaces before the lhs
     "sp_l2 : spaces after the lhs
     "sp_r1 : spaces before the rhs
     "sp_r2 : spaces after the rhs
@@ -75,34 +84,193 @@ function! s:FlipLR_execute(entire, ...) " only a:000[0] is used
 
     " replace
 
+    let old_t = @t
+    let @t = old_t
+
+    let old_t = @t
+    let @t = new_entire
     normal gv
-    let old_dq = @"
-    let @" = new_entire
-    normal p
-    let @" = old_dq
+    normal "tp
+    let @t = old_t
+
+    normal gv
+    let l1 = line('.')
+    let c1 = col('.')
+    normal gvo
+    let l2 = line('.')
+    let c2 = col('.')
+    execute "normal \<Esc>"
+
+    "call s:FlipLR__beginHighlighting(new_entire, pivot, line('.'), c1, c2)
+    call s:FlipLR__beginHighlightingByPos(new_entire, l1, c1, l2, c2, pivot)
+    call s:FlipLR__endHighlightingLater()
+
+    "echom 'stridx:' . string(stridx(sp_r2, "\n"))
+    "echom 'strlen:' . string(strlen(sp_r2) - 1)
+    "if stridx(sp_r2, "\n") == strlen(sp_r2) - 1
+    "    normal kJ
+    "endif
+endfunction
+
+function! g:FlipLR_startHighlightingPivot()
+    let pivot = s:FlipLR__substituteSpecialChars(g:FlipLR_detectPivot())
+
+    normal gv
+    let old_t = @t
+    normal "ty
+    let entire = s:FlipLR__substituteSpecialChars(@t)
+    let @t = old_t
+
+    normal gv
+    let l1 = line('.')
+    let c1 = col('.')
+    normal gvo
+    let l2 = line('.')
+    let c2 = col('.')
+
+    "call s:FlipLR__beginHighlighting(entire, pivot, line('.'), c1, c2)
+    call s:FlipLR__beginHighlightingByPos(entire, l1, c1, l2, c2, pivot)
+    call s:FlipLR__endHighlightingLater()
 endfunction
 
 function! g:FlipLR_detectPivot()
     normal gv
-    let old_dq = @"
-    normal y
-    let str = @"
-    let @" = old_dq
+    let old_t = @t
+    normal "ty
+    let str = @t
+    let @t = old_t
 
-    let elems = split(str, s:REGEXP_SPACE)
-    if len(elems) < 3
-        let elems = split(str, s:REGEXP_SPACE . '\|\<\|\>')
+    let elems = split(str, '^\|\<\|\>\|$\|\zs' . s:REGEXP_SPACE)
+    let c = len(elems)
+
+    " init
+    let ranks = map(copy(elems), '0')
+
+    " gain centers' ranks
+    if c % 2 == 1
+        let ranks[c / 2] += 1
+    else
+        let ranks[c / 2 - 1] += 1
+        let ranks[c / 2] += 1
     endif
-    return elems[len(elems)/2]
+
+    " gain non-word parts' ranks
+    " gain equal sign's rank
+    let i = 0
+    while i < c
+        if match(elems[i], '^\W\+$') != -1
+            let ranks[i] += 1
+            if stridx(elems[i], '=') != -1
+                let ranks[i] += 2
+            endif
+        endif
+        "echom i . ' ' . elems[i] . ' ' . ranks[i]
+        let i += 1
+    endwhile
+
+    let max_rank = -1
+    let max_idx = 0
+    let i = 0
+    while i < c
+        if max_rank < ranks[i]
+            let max_rank = ranks[i]
+            let max_idx = i
+        endif
+        let i += 1
+    endwhile
+
+    "echom join(elems, ', ')
+    "echom join(ranks, ', ')
+    let pivot = elems[max_idx]
+
+    return pivot
+endfunction
+
+function! s:FlipLR__beginHighlighting(entire, pivot, linenr, c1, c2)
+    highlight FlipLREntire term=underline gui=underline
+    highlight FlipLRPivot term=reverse,bold gui=reverse,bold
+
+    let sttc = a:c1
+    let endc = a:c2
+    if endc < sttc
+        let tmpc = endc
+        let endc = sttc
+        let sttc = tmpc
+    endif
+
+    syntax clear FlipLREntire
+    execute 'syntax match FlipLREntire /\V' . a:entire . '/ containedin=ALL'
+    " highlighting all pivots is annoying
+    syntax clear FlipLRPivot
+    execute 'syntax match FlipLRPivot /\%' . a:linenr . 'l\%>' . string(sttc - 1) . 'c\%<' . endc . 'c\V' . a:pivot . '/ containedin=ALL'
+endfunction
+
+function! s:FlipLR__beginHighlightingByPos(entire, startLine, startCol, endLine, endCol, pivot)
+    highlight FlipLREntire term=underline gui=underline
+    highlight FlipLRPivot term=reverse,bold gui=reverse,bold
+
+    let sttl = a:startLine
+    let sttc = a:startCol
+    let endl = a:endLine
+    let endc = a:endCol
+
+    if endl < sttl || (sttl == endl && endc < sttc)
+        let tmpl = endl
+        let endl = sttl
+        let sttl = tmpl
+        let tmpc = endc
+        let endc = sttc
+        let sttc = tmpc
+    endif
+    let sttc = sttc - 1
+    let endc = endc + 1
+
+    let expr = '\V'
+    if sttl == endl
+        let expr = expr.'\%'.sttl.'l\%>'.sttc.'c\%<'.endc.'c'
+        let entireExpr = expr.s:FlipLR__substituteSpecialChars(a:entire)
+        let pivotExpr = expr.s:FlipLR__substituteSpecialChars(a:pivot)
+    elseif sttl == endl - 1
+        let expr = expr.'\%'.sttl.'l\%>'.sttc.'c'
+        let expr = expr.'\|\%'.endl.'l\%<'.endc.'c'
+        let entireExpr = substitute(expr, '\V\\|', '\\.\\|', 'g').'\.'
+        let pivotExpr = substitute(expr, '\V\\|', a:pivot.'\\|', 'g').a:pivot
+    else
+        let expr = expr.'\%'.sttl.'l\%>'.sttc.'c'
+        let expr = expr.'\|\%>'.sttl.'l\%<'.endl.'l'
+        let expr = expr.'\|\%'.endl.'l\%<'.endc.'c'
+        let entireExpr = substitute(expr, '\V\\|', '\\.\\|', 'g').'\.'
+        let pivotExpr = substitute(expr, '\V\\|', a:pivot.'\\|', 'g').a:pivot
+    endif
+    "let @/ = pivotExpr
+
+    " highlighting all pivots is annoying
+    syntax clear FlipLRPivot
+    execute 'syntax match FlipLRPivot /'.pivotExpr.'/ containedin=ALL'
+    "let @1 = ':syntax match FlipLRPivot /'.pivotExpr.'/ containedin=ALL'
+    syntax clear FlipLREntire
+    execute 'syntax match FlipLREntire /'.entireExpr.'/ containedin=ALL'
+    "let @2 = ':syntax match FlipLREntire /'.entireExpr.'/ containedin=ALL'
+endfunction
+
+function! s:FlipLR__endHighlightingLater()
+    let g:FlipLR__oldUpdatetime = &updatetime
+    "echom g:FlipLR__oldUpdatetime
+    let &updatetime = g:FlipLR_resultHighlightDelay
+    augroup FlipLR
+        autocmd!
+        autocmd FlipLR CursorHold *
+                    \ let &updatetime = g:FlipLR__oldUpdatetime | syntax clear FlipLREntire | syntax clear FlipLRPivot | autocmd! FlipLR
+    augroup END
 endfunction
 
 function! s:FlipLR__getSelectedText()
-    let old_a = @a
+    let old_t = @t
 
-    normal gv"ay
-    let result = @a
+    normal gv"ty
+    let result = @t
 
-    let @a = old_a
+    let @t = old_t
 
     return result
 endfunction
@@ -118,7 +286,7 @@ endfunction
 " a = b
 " a != b
 " a |= b
-" a ~= b
-" a \= b
+" a ~= bb ~= cccc
+" a + c \= b
 
 " vim: set et ft=vim sts=4 sw=4 ts=4 tw=0 : 

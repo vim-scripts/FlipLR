@@ -9,7 +9,7 @@ Usage:
   2'. execute ':FlipLR /operator/' to flip with regexp
 
   This mapping may help you.
-      noremap \f :FlipLR <C-R>=g:FlipLR_detectPivot()<CR>
+      noremap \f :call g:FlipLR_startHighlightingPivot()<CR><ESC>:FlipLR <C-R>=g:FlipLR_detectPivot()<CR>
 
 Screencast:
   http://bitbucket.org/shu/fliplr/downloads/fliplr.htm
